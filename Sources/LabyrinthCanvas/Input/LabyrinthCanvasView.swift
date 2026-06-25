@@ -31,6 +31,8 @@ private struct LabyrinthCanvasRepresentable: UIViewRepresentable {
 }
 
 private final class LabyrinthMetalCanvasView: MTKView, MTKViewDelegate, UIGestureRecognizerDelegate {
+    private enum AnchorOwner { case none, pinch, rotation }
+
     var model: LabyrinthCanvasModel
 
     private var renderer: LabyrinthMetalRenderer?
@@ -38,6 +40,13 @@ private final class LabyrinthMetalCanvasView: MTKView, MTKViewDelegate, UIGestur
     private var activeStrokeSamples: [LabyrinthStrokeInputSample] = []
     private var activeObject: (frame: LabyrinthFrame, id: UUID, lastPointInFrame: SIMD2<Double>, handler: LabyrinthObjectGestureHandler?)?
     private var activePinchObject: (frame: LabyrinthFrame, id: UUID)?
+    private var activeOwner: AnchorOwner = .none
+    private var anchorWorld: SIMD2<Double> = .zero
+    private var anchorScreen: CGPoint = .zero
+    private var lastPinchTouchCount = 0
+    private var lastRotationTouchCount = 0
+    private var rotationGestureBaseAngle: Float = 0
+    private var rotationGestureAccumulated: Float = 0
 
     private lazy var cameraPanGesture = UIPanGestureRecognizer(target: self, action: #selector(handleCameraPan(_:)))
     private lazy var objectPanGesture = UIPanGestureRecognizer(target: self, action: #selector(handleObjectPan(_:)))
@@ -53,6 +62,7 @@ private final class LabyrinthMetalCanvasView: MTKView, MTKViewDelegate, UIGestur
         self.device = device
         colorPixelFormat = .bgra8Unorm
         framebufferOnly = true
+        sampleCount = 1
         isPaused = false
         enableSetNeedsDisplay = false
         preferredFramesPerSecond = UIScreen.main.maximumFramesPerSecond
@@ -79,9 +89,20 @@ private final class LabyrinthMetalCanvasView: MTKView, MTKViewDelegate, UIGestur
 
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
+    private var isRunningOnMac: Bool {
+        #if targetEnvironment(macCatalyst)
+        return true
+        #else
+        if #available(iOS 14.0, *) {
+            return ProcessInfo.processInfo.isiOSAppOnMac
+        }
+        return false
+        #endif
+    }
+
     fileprivate func configureGesturePolicy() {
         cameraPanGesture.minimumNumberOfTouches = allowsSingleFingerCanvasPan ? 1 : 2
-        cameraPanGesture.maximumNumberOfTouches = 0
+        cameraPanGesture.maximumNumberOfTouches = 2
         objectPanGesture.minimumNumberOfTouches = 1
         objectPanGesture.maximumNumberOfTouches = 1
     }
@@ -103,12 +124,49 @@ private final class LabyrinthMetalCanvasView: MTKView, MTKViewDelegate, UIGestur
         pinchGesture.delegate = self
         rotationGesture.delegate = self
         objectPinchGesture.delegate = self
+        configureGestureInputs()
 
         addGestureRecognizer(cameraPanGesture)
         addGestureRecognizer(objectPanGesture)
         addGestureRecognizer(pinchGesture)
         addGestureRecognizer(rotationGesture)
         addGestureRecognizer(objectPinchGesture)
+    }
+
+    private func configureGestureInputs() {
+        #if targetEnvironment(macCatalyst)
+        cameraPanGesture.allowedTouchTypes = []
+        if #available(iOS 13.4, macCatalyst 13.4, *) {
+            cameraPanGesture.allowedScrollTypesMask = [.continuous, .discrete]
+        }
+        objectPanGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        #else
+        cameraPanGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        if #available(iOS 13.4, *) {
+            cameraPanGesture.allowedScrollTypesMask = [.continuous, .discrete]
+        }
+        objectPanGesture.allowedTouchTypes = [NSNumber(value: UITouch.TouchType.direct.rawValue)]
+        #endif
+    }
+
+    private func lockAnchor(owner: AnchorOwner, at screenPoint: CGPoint) {
+        activeOwner = owner
+        anchorScreen = screenPoint
+        anchorWorld = LabyrinthCanvasMath.screenToWorld(screenPoint, viewSize: bounds.size, camera: model.camera)
+    }
+
+    private func relockAnchorAtCurrentCentroid(owner: AnchorOwner, screenPoint: CGPoint) {
+        activeOwner = owner
+        anchorScreen = screenPoint
+        anchorWorld = LabyrinthCanvasMath.screenToWorld(screenPoint, viewSize: bounds.size, camera: model.camera)
+    }
+
+    private func handoffAnchor(to newOwner: AnchorOwner, screenPoint: CGPoint) {
+        relockAnchorAtCurrentCentroid(owner: newOwner, screenPoint: screenPoint)
+    }
+
+    private func clearAnchorIfUnused() {
+        activeOwner = .none
     }
 
     override func gestureRecognizerShouldBegin(_ gestureRecognizer: UIGestureRecognizer) -> Bool {
@@ -125,7 +183,13 @@ private final class LabyrinthMetalCanvasView: MTKView, MTKViewDelegate, UIGestur
         }
 
         if gestureRecognizer === cameraPanGesture {
-            return allowsSingleFingerCanvasPan || cameraPanGesture.numberOfTouches >= 2
+            if allowsSingleFingerCanvasPan || cameraPanGesture.numberOfTouches >= 2 {
+                return true
+            }
+            if #available(iOS 13.4, macCatalyst 13.4, *) {
+                return !cameraPanGesture.allowedScrollTypesMask.isEmpty
+            }
+            return false
         }
 
         if gestureRecognizer === pinchGesture {
@@ -145,9 +209,13 @@ private final class LabyrinthMetalCanvasView: MTKView, MTKViewDelegate, UIGestur
 
     func gestureRecognizer(_ gestureRecognizer: UIGestureRecognizer,
                            shouldRecognizeSimultaneouslyWith otherGestureRecognizer: UIGestureRecognizer) -> Bool {
-        let pair = Set([ObjectIdentifier(gestureRecognizer), ObjectIdentifier(otherGestureRecognizer)])
-        let cameraPair = Set([ObjectIdentifier(pinchGesture), ObjectIdentifier(rotationGesture)])
-        return pair == cameraPair
+        let cameraGestures = Set([
+            ObjectIdentifier(cameraPanGesture),
+            ObjectIdentifier(pinchGesture),
+            ObjectIdentifier(rotationGesture)
+        ])
+        return cameraGestures.contains(ObjectIdentifier(gestureRecognizer)) &&
+            cameraGestures.contains(ObjectIdentifier(otherGestureRecognizer))
     }
 
     @objc private func handleCameraPan(_ gesture: UIPanGestureRecognizer) {
@@ -158,22 +226,110 @@ private final class LabyrinthMetalCanvasView: MTKView, MTKViewDelegate, UIGestur
     }
 
     @objc private func handlePinch(_ gesture: UIPinchGestureRecognizer) {
+        let location = gesture.location(in: self)
+        let touchCount = gesture.numberOfTouches
+
         switch gesture.state {
-        case .began, .changed:
-            let location = gesture.location(in: self)
-            model.zoom(by: Double(gesture.scale), anchorScreen: location, viewSize: bounds.size)
+        case .began:
+            lastPinchTouchCount = touchCount
+            if activeOwner == .none {
+                lockAnchor(owner: .pinch, at: location)
+            }
             gesture.scale = 1.0
+
+        case .changed:
+            if activeOwner == .pinch, touchCount != lastPinchTouchCount {
+                relockAnchorAtCurrentCentroid(owner: .pinch, screenPoint: location)
+                lastPinchTouchCount = touchCount
+                gesture.scale = 1.0
+                return
+            }
+
+            let rawScale = max(Double(gesture.scale), 1e-6)
+            let appliedScale = isRunningOnMac ? pow(rawScale, 0.25) : rawScale
+            gesture.scale = 1.0
+
+            let targetScreen = (activeOwner == .pinch) ? location : anchorScreen
+            let result = model.zoom(by: appliedScale,
+                                    lockedAnchorWorld: anchorWorld,
+                                    anchorScreen: anchorScreen,
+                                    targetScreen: targetScreen,
+                                    viewSize: bounds.size)
+            anchorWorld = result.anchorWorld
+            if result.didTransition {
+                return
+            }
+
+            if activeOwner == .pinch {
+                anchorScreen = targetScreen
+            }
+
+        case .ended, .cancelled, .failed:
+            if activeOwner == .pinch {
+                if rotationGesture.state == .changed || rotationGesture.state == .began {
+                    handoffAnchor(to: .rotation, screenPoint: rotationGesture.location(in: self))
+                } else {
+                    clearAnchorIfUnused()
+                }
+            }
+            lastPinchTouchCount = 0
+
         default:
             break
         }
     }
 
     @objc private func handleRotation(_ gesture: UIRotationGestureRecognizer) {
+        let location = gesture.location(in: self)
+        let touchCount = gesture.numberOfTouches
+
         switch gesture.state {
-        case .began, .changed:
-            let location = gesture.location(in: self)
-            model.rotate(by: Float(gesture.rotation), anchorScreen: location, viewSize: bounds.size)
-            gesture.rotation = 0
+        case .began:
+            lastRotationTouchCount = touchCount
+            rotationGestureBaseAngle = model.camera.rotation
+            rotationGestureAccumulated = 0
+            if activeOwner == .none {
+                lockAnchor(owner: .rotation, at: location)
+            }
+            gesture.rotation = 0.0
+
+        case .changed:
+            if activeOwner == .rotation, touchCount != lastRotationTouchCount {
+                relockAnchorAtCurrentCentroid(owner: .rotation, screenPoint: location)
+                lastRotationTouchCount = touchCount
+                rotationGestureBaseAngle = model.camera.rotation
+                rotationGestureAccumulated = 0
+                gesture.rotation = 0.0
+                return
+            }
+
+            rotationGestureAccumulated += Float(gesture.rotation)
+            let targetRotation = rotationGestureBaseAngle + rotationGestureAccumulated
+            gesture.rotation = 0.0
+
+            let targetScreen = (activeOwner == .rotation) ? location : anchorScreen
+            let result = model.rotate(to: targetRotation,
+                                      lockedAnchorWorld: anchorWorld,
+                                      anchorScreen: anchorScreen,
+                                      targetScreen: targetScreen,
+                                      viewSize: bounds.size)
+            anchorWorld = result.anchorWorld
+            if activeOwner == .rotation {
+                anchorScreen = targetScreen
+            }
+
+        case .ended, .cancelled, .failed:
+            rotationGestureBaseAngle = model.camera.rotation
+            rotationGestureAccumulated = 0
+            if activeOwner == .rotation {
+                if pinchGesture.state == .changed || pinchGesture.state == .began {
+                    handoffAnchor(to: .pinch, screenPoint: pinchGesture.location(in: self))
+                } else {
+                    clearAnchorIfUnused()
+                }
+            }
+            lastRotationTouchCount = 0
+
         default:
             break
         }
@@ -248,6 +404,12 @@ private final class LabyrinthMetalCanvasView: MTKView, MTKViewDelegate, UIGestur
     }
 
     override func touchesBegan(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard isSingleTouchDrawingEvent(event, fallbackTouches: touches) else {
+            cancelActiveStroke()
+            super.touchesBegan(touches, with: event)
+            return
+        }
+
         guard activeStrokeTouch == nil,
               let touch = touches.first(where: acceptsDrawingTouch(_:)) else {
             super.touchesBegan(touches, with: event)
@@ -262,6 +424,12 @@ private final class LabyrinthMetalCanvasView: MTKView, MTKViewDelegate, UIGestur
     }
 
     override func touchesMoved(_ touches: Set<UITouch>, with event: UIEvent?) {
+        guard isSingleTouchDrawingEvent(event, fallbackTouches: touches) else {
+            cancelActiveStroke()
+            super.touchesMoved(touches, with: event)
+            return
+        }
+
         guard let activeStrokeTouch,
               touches.contains(activeStrokeTouch) else {
             super.touchesMoved(touches, with: event)
@@ -297,6 +465,16 @@ private final class LabyrinthMetalCanvasView: MTKView, MTKViewDelegate, UIGestur
             return
         }
         self.activeStrokeTouch = nil
+        activeStrokeSamples = []
+    }
+
+    private func isSingleTouchDrawingEvent(_ event: UIEvent?, fallbackTouches touches: Set<UITouch>) -> Bool {
+        let touchCount = event?.allTouches?.count ?? touches.count
+        return touchCount <= 1
+    }
+
+    private func cancelActiveStroke() {
+        activeStrokeTouch = nil
         activeStrokeSamples = []
     }
 

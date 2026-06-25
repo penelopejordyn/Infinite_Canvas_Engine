@@ -3,11 +3,17 @@ import CoreGraphics
 import Foundation
 import simd
 
+struct LabyrinthAnchorGestureResult {
+    let anchorWorld: SIMD2<Double>
+    let didTransition: Bool
+}
+
 public final class LabyrinthCanvasModel: ObservableObject {
     @Published public var inputMode: LabyrinthInputMode
     @Published public var brushStyle: LabyrinthBrushStyle
     @Published public var camera: LabyrinthCamera
     @Published public var options: LabyrinthCanvasOptions
+    @Published public private(set) var lastCameraChange: LabyrinthCanvasCameraChange?
 
     public private(set) var rootFrame: LabyrinthFrame
     public private(set) var activeFrame: LabyrinthFrame
@@ -20,7 +26,7 @@ public final class LabyrinthCanvasModel: ObservableObject {
         get { brushStyle.strokeWidthMode }
         set {
             var style = brushStyle
-            style.strokeWidthMode = newValue
+            style.setStrokeWidthMode(newValue, currentEffectiveZoom: camera.zoom)
             brushStyle = style
         }
     }
@@ -66,6 +72,7 @@ public final class LabyrinthCanvasModel: ObservableObject {
         self.objects = objects
         self.nextZIndex = LabyrinthCanvasModel.nextZIndex(in: rootFrame)
         self.createdAt = Date()
+        self.lastCameraChange = nil
     }
 
     public convenience init(jsonData: Data) throws {
@@ -108,6 +115,7 @@ public final class LabyrinthCanvasModel: ObservableObject {
         camera = snapshot.camera
         nextZIndex = Self.nextZIndex(in: root)
         createdAt = snapshot.createdAt
+        lastCameraChange = nil
     }
 
     public func addObject(_ object: LabyrinthCanvasObject, to frame: LabyrinthFrame? = nil) {
@@ -137,18 +145,17 @@ public final class LabyrinthCanvasModel: ObservableObject {
         let firstActive = LabyrinthCanvasMath.screenToWorld(first.point, viewSize: viewSize, camera: camera)
         let resolved = resolveFrame(forActivePoint: firstActive)
         let originInFrame = resolved.pointInFrame
-        let worldWidth = brushStyle.constantScreenSize
-            ? brushStyle.width / max(camera.zoom / max(resolved.conversionScale, 1e-9), 1e-9)
-            : brushStyle.width
+        let effectiveZoom = max(camera.zoom / max(resolved.conversionScale, 1e-9), 1e-9)
+        let worldWidth = brushStyle.worldStrokeWidth(effectiveZoom: effectiveZoom)
         let localSamples = makeLocalStrokeSamples(screenSamples,
                                                   firstScreenPoint: first.point,
-                                                  zoom: max(camera.zoom / max(resolved.conversionScale, 1e-9), 1e-9))
+                                                  zoom: effectiveZoom)
         let draft = LabyrinthStrokeDraft(
             screenSamples: screenSamples,
             localSamples: localSamples,
             originInFrame: originInFrame,
             worldWidth: worldWidth,
-            creationZoom: camera.zoom,
+            creationZoom: effectiveZoom,
             brushStyle: brushStyle
         )
         guard let brush = brushes.brush(for: brushStyle.brushID) else {
@@ -211,6 +218,13 @@ public final class LabyrinthCanvasModel: ObservableObject {
             stroke.samples = stroke.samples.map {
                 LabyrinthStrokeSample(x: $0.x * Float(scale), y: $0.y * Float(scale), pressure: $0.pressure)
             }
+            stroke.segments = LabyrinthStrokePayload.buildSegments(from: stroke.samples, color: stroke.color)
+            let bounds = LabyrinthStrokePayload.calculateBounds(
+                for: stroke.samples,
+                baseRadius: Float(stroke.worldWidth) * 0.5
+            )
+            stroke.segmentBounds = LabyrinthStrokeBounds(bounds)
+            stroke.cullingRadiusWorld = LabyrinthStrokePayload.cullingRadius(from: bounds)
             if let payload = try? LabyrinthJSONValue.encodePayload(stroke) {
                 frame.objects[index].payload = payload
             }
@@ -226,43 +240,143 @@ public final class LabyrinthCanvasModel: ObservableObject {
     }
 
     public func pan(by translation: CGPoint, viewSize: CGSize) {
+        let beforeFrame = activeFrame
+        let before = cameraSnapshot(viewSize: viewSize)
         objectWillChange.send()
         camera.panSIMD += SIMD2<Double>(Double(translation.x), Double(translation.y))
         let center = CGPoint(x: viewSize.width / 2, y: viewSize.height / 2)
         let anchor = LabyrinthCanvasMath.screenToWorld(center, viewSize: viewSize, camera: camera)
         _ = wrapFractalIfNeeded(anchorWorld: anchor, anchorScreen: center, viewSize: viewSize)
+        lastCameraChange = LabyrinthCanvasCameraChange(
+            kind: .pan,
+            didTransition: activeFrame !== beforeFrame,
+            before: before,
+            after: cameraSnapshot(viewSize: viewSize)
+        )
     }
 
     public func zoom(by scale: Double, anchorScreen: CGPoint, viewSize: CGSize) {
-        guard scale.isFinite, scale > 0 else { return }
-        objectWillChange.send()
         let anchorWorld = LabyrinthCanvasMath.screenToWorld(anchorScreen, viewSize: viewSize, camera: camera)
+        zoom(by: scale,
+             lockedAnchorWorld: anchorWorld,
+             anchorScreen: anchorScreen,
+             targetScreen: anchorScreen,
+             viewSize: viewSize)
+    }
+
+    @discardableResult
+    func zoom(by scale: Double,
+              lockedAnchorWorld anchorWorld: SIMD2<Double>,
+              anchorScreen: CGPoint,
+              targetScreen: CGPoint,
+              viewSize: CGSize) -> LabyrinthAnchorGestureResult {
+        guard scale.isFinite, scale > 0 else {
+            return LabyrinthAnchorGestureResult(anchorWorld: anchorWorld, didTransition: false)
+        }
+
+        let before = cameraSnapshot(viewSize: viewSize, inspecting: anchorScreen)
+        objectWillChange.send()
         camera.zoom = max(camera.zoom * scale, 1e-9)
         if checkFractalTransitions(anchorWorld: anchorWorld, anchorScreen: anchorScreen, viewSize: viewSize) {
-            return
+            let refreshedAnchor = LabyrinthCanvasMath.screenToWorld(anchorScreen, viewSize: viewSize, camera: camera)
+            lastCameraChange = LabyrinthCanvasCameraChange(
+                kind: .zoom,
+                didTransition: true,
+                before: before,
+                after: cameraSnapshot(viewSize: viewSize, inspecting: anchorScreen)
+            )
+            return LabyrinthAnchorGestureResult(anchorWorld: refreshedAnchor, didTransition: true)
         }
+
         camera.panSIMD = LabyrinthCanvasMath.solvePanOffset(
             anchorWorld: anchorWorld,
-            desiredScreen: anchorScreen,
+            desiredScreen: targetScreen,
             viewSize: viewSize,
             zoom: camera.zoom,
             rotation: camera.rotation
         )
+        let beforeFinalWrapFrame = activeFrame
+        let wrappedAnchor = wrapFractalIfNeeded(anchorWorld: anchorWorld,
+                                                anchorScreen: targetScreen,
+                                                viewSize: viewSize)
+        lastCameraChange = LabyrinthCanvasCameraChange(
+            kind: .zoom,
+            didTransition: activeFrame !== beforeFinalWrapFrame,
+            before: before,
+            after: cameraSnapshot(viewSize: viewSize, inspecting: targetScreen)
+        )
+        return LabyrinthAnchorGestureResult(anchorWorld: wrappedAnchor, didTransition: false)
     }
 
     public func rotate(by radians: Float, anchorScreen: CGPoint, viewSize: CGSize) {
-        guard options.supportsRotation else { return }
-        objectWillChange.send()
         let anchorWorld = LabyrinthCanvasMath.screenToWorld(anchorScreen, viewSize: viewSize, camera: camera)
-        camera.rotation += radians
+        rotate(to: camera.rotation + radians,
+               lockedAnchorWorld: anchorWorld,
+               anchorScreen: anchorScreen,
+               targetScreen: anchorScreen,
+               viewSize: viewSize)
+    }
+
+    @discardableResult
+    func rotate(to radians: Float,
+                lockedAnchorWorld anchorWorld: SIMD2<Double>,
+                anchorScreen: CGPoint,
+                targetScreen: CGPoint,
+                viewSize: CGSize) -> LabyrinthAnchorGestureResult {
+        guard options.supportsRotation else {
+            return LabyrinthAnchorGestureResult(anchorWorld: anchorWorld, didTransition: false)
+        }
+
+        let beforeFrame = activeFrame
+        let before = cameraSnapshot(viewSize: viewSize, inspecting: anchorScreen)
+        objectWillChange.send()
+        camera.rotation = radians
         camera.panSIMD = LabyrinthCanvasMath.solvePanOffset(
             anchorWorld: anchorWorld,
-            desiredScreen: anchorScreen,
+            desiredScreen: targetScreen,
             viewSize: viewSize,
             zoom: camera.zoom,
             rotation: camera.rotation
         )
-        _ = wrapFractalIfNeeded(anchorWorld: anchorWorld, anchorScreen: anchorScreen, viewSize: viewSize)
+        let beforeFinalWrapFrame = activeFrame
+        let wrappedAnchor = wrapFractalIfNeeded(anchorWorld: anchorWorld,
+                                                anchorScreen: targetScreen,
+                                                viewSize: viewSize)
+        lastCameraChange = LabyrinthCanvasCameraChange(
+            kind: .rotate,
+            didTransition: activeFrame !== beforeFrame || activeFrame !== beforeFinalWrapFrame,
+            before: before,
+            after: cameraSnapshot(viewSize: viewSize, inspecting: targetScreen)
+        )
+        return LabyrinthAnchorGestureResult(anchorWorld: wrappedAnchor, didTransition: false)
+    }
+
+    public func cameraSnapshot(viewSize: CGSize,
+                               inspecting screenPoint: CGPoint? = nil) -> LabyrinthCanvasCameraSnapshot {
+        let centerScreen = CGPoint(x: viewSize.width / 2, y: viewSize.height / 2)
+        let centerWorld = LabyrinthCanvasMath.screenToWorld(centerScreen,
+                                                            viewSize: viewSize,
+                                                            camera: camera)
+        let inspectedWorld = screenPoint.map {
+            LabyrinthCanvasMath.screenToWorld($0, viewSize: viewSize, camera: camera)
+        }
+        let centerRoot = pointInRootFrame(centerWorld, from: activeFrame)
+        let inspectedRoot = inspectedWorld.flatMap { pointInRootFrame($0, from: activeFrame) }
+
+        return LabyrinthCanvasCameraSnapshot(
+            activeFrameID: activeFrame.id,
+            activeFrameDepth: activeFrame.depthFromRoot,
+            activeFramePath: framePathFromRoot(to: activeFrame),
+            cameraPan: camera.pan,
+            cameraZoom: camera.zoom,
+            cameraRotation: camera.rotation,
+            cameraCenterScreen: LabyrinthPoint(x: Double(centerScreen.x), y: Double(centerScreen.y)),
+            cameraCenterInActiveFrame: LabyrinthPoint(centerWorld),
+            cameraCenterInRootFrame: centerRoot.map(LabyrinthPoint.init),
+            inspectedScreenPoint: screenPoint.map { LabyrinthPoint(x: Double($0.x), y: Double($0.y)) },
+            inspectedPointInActiveFrame: inspectedWorld.map(LabyrinthPoint.init),
+            inspectedPointInRootFrame: inspectedRoot.map(LabyrinthPoint.init)
+        )
     }
 
     public func allFrames() -> [LabyrinthFrame] {
@@ -289,6 +403,18 @@ public final class LabyrinthCanvasModel: ObservableObject {
         }
         guard cursor === rootFrame else { return nil }
         return path.reversed()
+    }
+
+    public func pointInRootFrame(_ point: SIMD2<Double>, from frame: LabyrinthFrame) -> SIMD2<Double>? {
+        guard let path = framePathFromRoot(to: frame) else { return nil }
+
+        var rootPoint = point
+        for index in path.reversed() {
+            let childCenter = LabyrinthFractalGrid.childCenterInParent(frameExtent: fractal.extentSIMD,
+                                                                       index: index)
+            rootPoint = childCenter + (rootPoint / fractal.scale)
+        }
+        return rootPoint
     }
 
     public func transformFromActive(to target: LabyrinthFrame) -> (scale: Double, translation: SIMD2<Double>)? {
@@ -468,8 +594,9 @@ public final class LabyrinthCanvasModel: ObservableObject {
     private func checkFractalTransitions(anchorWorld: SIMD2<Double>,
                                          anchorScreen: CGPoint,
                                          viewSize: CGSize) -> Bool {
+        let beforeWrapFrame = activeFrame
         var anchor = wrapFractalIfNeeded(anchorWorld: anchorWorld, anchorScreen: anchorScreen, viewSize: viewSize)
-        var transitioned = false
+        var transitioned = activeFrame !== beforeWrapFrame
 
         while camera.zoom >= fractal.scale {
             anchor = drillDownToChildTile(anchorWorld: anchor, anchorScreen: anchorScreen, viewSize: viewSize)
@@ -501,6 +628,7 @@ public final class LabyrinthCanvasModel: ObservableObject {
 
         activeFrame = child
         camera.zoom /= fractal.scale
+        adjustScaleWithZoomBaseEffectiveZoom(by: 1.0 / fractal.scale)
         camera.panSIMD = LabyrinthCanvasMath.solvePanOffset(
             anchorWorld: anchorInChild,
             desiredScreen: anchorScreen,
@@ -527,6 +655,7 @@ public final class LabyrinthCanvasModel: ObservableObject {
         let anchorInParent = childCenter + (anchorWorld / fractal.scale)
         activeFrame = parent
         camera.zoom *= fractal.scale
+        adjustScaleWithZoomBaseEffectiveZoom(by: fractal.scale)
         camera.panSIMD = LabyrinthCanvasMath.solvePanOffset(
             anchorWorld: anchorInParent,
             desiredScreen: anchorScreen,
@@ -535,6 +664,14 @@ public final class LabyrinthCanvasModel: ObservableObject {
             rotation: camera.rotation
         )
         return anchorInParent
+    }
+
+    private func adjustScaleWithZoomBaseEffectiveZoom(by factor: Double) {
+        var style = brushStyle
+        style.adjustScaleWithZoomBaseEffectiveZoom(by: factor)
+        if style != brushStyle {
+            brushStyle = style
+        }
     }
 
     private static func frame(at path: [LabyrinthGridIndex], root: LabyrinthFrame) -> LabyrinthFrame? {

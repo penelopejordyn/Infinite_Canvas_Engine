@@ -7,7 +7,9 @@ The package renders built-in strokes with Metal. Custom objects can render in tw
 
 ## Built-In Stroke Renderer
 
-`LabyrinthStrokePayload` is rendered as SDF capsule segments. Stroke points are stored locally relative to each stroke origin, and the renderer projects them through the active recursive frame transform.
+`LabyrinthStrokePayload` is rendered through the same default stroke approach used by the Labyrinth app: SDF capsule segment instances with pressure interpolation, stored local bounds, culling radius, and minimum visible screen-width culling. Stroke points are stored locally relative to each stroke origin, and the renderer projects them through the active recursive frame transform.
+
+The package shader uses Labyrinth's hard SDF edge discard for built-in strokes. It does not use the package's older smooth alpha edge, which could create halos around overlapping strokes. The renderer then applies the Labyrinth app's FXAA fullscreen post-process before presenting the drawable.
 
 ## Custom Metal Renderer
 

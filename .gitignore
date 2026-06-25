@@ -4,3 +4,9 @@ DerivedData/
 *.xcodeproj
 *.xcworkspace
 .DS_Store
+
+!Examples/BasicCanvas/BasicCanvas.xcodeproj/
+!Examples/BasicCanvas/BasicCanvas.xcodeproj/project.pbxproj
+!Examples/BasicCanvas/BasicCanvas.xcodeproj/xcshareddata/
+!Examples/BasicCanvas/BasicCanvas.xcodeproj/xcshareddata/**
+Examples/BasicCanvas/BasicCanvas.xcodeproj/xcuserdata/

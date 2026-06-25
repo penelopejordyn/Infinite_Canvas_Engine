@@ -19,7 +19,9 @@ Objects are stored in frame-local coordinates. A stroke stores:
 
 - object transform position: stroke origin in the frame
 - payload samples: Float offsets from that origin
+- payload segment instances: render-ready SDF centerline segments
 - payload width: width in that frame's world units
+- payload bounds and culling radius: fast visibility rejection before encoding draw instances
 
 This keeps authored geometry numerically small even after deep recursive navigation.
 

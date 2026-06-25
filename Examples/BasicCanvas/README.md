@@ -1,19 +1,15 @@
-# BasicCanvas Example App
+# BasicCanvas Example
 
-This is a small SwiftUI iOS example that uses `LabyrinthCanvasView` directly and builds its own controls around `LabyrinthCanvasModel`.
+This is a small SwiftUI example app that uses `LabyrinthCanvasView` directly and builds its own controls around `LabyrinthCanvasModel`.
 
 ## Run It
 
-1. Open Xcode.
-2. Create a new iOS App project named `BasicCanvas`.
-3. Add this package as a dependency:
+1. Open `BasicCanvas.xcodeproj` in Xcode.
+2. Select the `BasicCanvas` scheme.
+3. Choose an iPhone/iPad simulator, an attached iOS device, or `My Mac (Mac Catalyst)`.
+4. Press Run.
 
-   ```text
-   https://github.com/penelopejordyn/Infinite_Canvas_Engine.git
-   ```
-
-4. Link the `LabyrinthCanvas` product to the app target.
-5. Replace the generated app files with the files in `BasicCanvasApp/`.
+For a physical iPhone or iPad, select your Apple development team in the target's Signing & Capabilities settings if Xcode asks for one. The Mac Catalyst destination is configured for local ad-hoc signing.
 
 ## What It Demonstrates
 

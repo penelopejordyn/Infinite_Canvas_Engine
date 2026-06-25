@@ -54,6 +54,8 @@ canvas.strokeWidthMode = .fixedScreenSize
 canvas.strokeWidthMode = .scalesWithZoom
 ```
 
+When switching from fixed to scaled width, the current effective zoom is captured and adjusted across recursive frame-depth changes.
+
 ## Options
 
 ```swift
@@ -67,3 +69,16 @@ canvas.options.supportsRotation = true
 `fingerAndStylus` uses one-finger draw/erase and two-finger pan. `stylusOnly` uses Apple Pencil/stylus for draw/erase and frees one-finger touches for panning.
 
 These are canvas behavior settings only. They do not create UI.
+
+## Gesture Diagnostics
+
+Use `cameraSnapshot(viewSize:inspecting:)` while debugging pan/zoom behavior:
+
+```swift
+let snapshot = canvas.cameraSnapshot(viewSize: viewSize)
+print(snapshot.activeFramePath as Any)
+print(snapshot.cameraCenterInActiveFrame)
+```
+
+`lastCameraChange` contains before/after snapshots for the most recent pan, zoom, or rotation, including active frame path, active-frame local coordinates, pan, zoom, and whether a recursive frame transition happened.
+Read the coordinates with the frame path: active-local coordinates are expected to change when depth changes, while retained-root coordinates are useful for checking continuity across normal child/parent transitions.

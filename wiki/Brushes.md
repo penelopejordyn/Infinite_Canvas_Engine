@@ -35,7 +35,7 @@ canvas.brushStyle = LabyrinthBrushStyle(
 )
 ```
 
-Use `.fixedScreenSize` when the brush should stay the same visual size while zooming. Use `.scalesWithZoom` when the mark should behave like authored canvas content.
+Use `.fixedScreenSize` when the brush should stay the same visual size while zooming. Use `.scalesWithZoom` when the mark should behave like authored canvas content. The scaled mode captures the current effective zoom and keeps that base stable as frame depth changes.
 
 ## Returning Custom Objects
 
