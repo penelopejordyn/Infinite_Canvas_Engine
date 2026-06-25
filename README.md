@@ -55,6 +55,8 @@ struct EditorScreen: View {
 }
 ```
 
+See `Examples/BasicCanvas` for a small SwiftUI example app with controls for tools, stroke size behavior, finger/stylus input, and JSON save/load.
+
 Save the canvas:
 
 ```swift
@@ -79,6 +81,39 @@ canvas.inputMode = .manipulate // move/scale objects
 ```
 
 In draw and erase modes, two-finger pan, pinch, and rotation still navigate the canvas.
+
+## Stroke Width Mode
+
+Labyrinth exposes the same behavior as the app's fixed-size toggle:
+
+```swift
+canvas.strokeWidthMode = .fixedScreenSize // width stays fixed on screen
+canvas.strokeWidthMode = .scalesWithZoom  // width scales with canvas content
+```
+
+You can also set it when creating a brush style:
+
+```swift
+canvas.brushStyle = LabyrinthBrushStyle(
+    width: 8,
+    color: .ink,
+    strokeWidthMode: .fixedScreenSize
+)
+```
+
+## Finger vs Stylus Input
+
+Set the input policy from your own UI:
+
+```swift
+canvas.drawingInputPolicy = .fingerAndStylus
+canvas.drawingInputPolicy = .stylusOnly
+```
+
+The gesture policy changes with the input mode:
+
+- `fingerAndStylus`: one-finger draw/erase, two-finger pan.
+- `stylusOnly`: Apple Pencil/stylus draws, one-finger pan is available.
 
 ## Wiki
 

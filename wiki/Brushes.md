@@ -30,9 +30,12 @@ canvas.brushes.register(HighlighterBrush())
 canvas.brushStyle = LabyrinthBrushStyle(
     brushID: "com.example.highlighter",
     width: 10,
-    color: LabyrinthColor(red: 1.0, green: 0.88, blue: 0.2, alpha: 0.35)
+    color: LabyrinthColor(red: 1.0, green: 0.88, blue: 0.2, alpha: 0.35),
+    strokeWidthMode: .fixedScreenSize
 )
 ```
+
+Use `.fixedScreenSize` when the brush should stay the same visual size while zooming. Use `.scalesWithZoom` when the mark should behave like authored canvas content.
 
 ## Returning Custom Objects
 

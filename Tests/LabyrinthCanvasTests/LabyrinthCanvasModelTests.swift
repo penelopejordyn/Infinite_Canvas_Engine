@@ -70,4 +70,37 @@ final class LabyrinthCanvasModelTests: XCTestCase {
         XCTAssertEqual(model.activeFrame.depthFromRoot, original.depthFromRoot)
         XCTAssertEqual(model.camera.pan.x, 324, accuracy: 0.0001)
     }
+
+    func testStrokeWidthModeUpdatesBrushStyle() {
+        let model = LabyrinthCanvasModel()
+
+        XCTAssertEqual(model.strokeWidthMode, .fixedScreenSize)
+
+        model.strokeWidthMode = .scalesWithZoom
+
+        XCTAssertEqual(model.strokeWidthMode, .scalesWithZoom)
+        XCTAssertFalse(model.brushStyle.constantScreenSize)
+
+        model.strokeWidthMode = .fixedScreenSize
+
+        XCTAssertEqual(model.strokeWidthMode, .fixedScreenSize)
+        XCTAssertTrue(model.brushStyle.constantScreenSize)
+    }
+
+    func testDrawingInputPolicyKeepsLegacyBooleanInSync() {
+        let model = LabyrinthCanvasModel()
+
+        XCTAssertEqual(model.drawingInputPolicy, .fingerAndStylus)
+        XCTAssertTrue(model.allowsFingerDrawing)
+
+        model.drawingInputPolicy = .stylusOnly
+
+        XCTAssertEqual(model.drawingInputPolicy, .stylusOnly)
+        XCTAssertFalse(model.allowsFingerDrawing)
+
+        model.allowsFingerDrawing = true
+
+        XCTAssertEqual(model.drawingInputPolicy, .fingerAndStylus)
+        XCTAssertTrue(model.allowsFingerDrawing)
+    }
 }

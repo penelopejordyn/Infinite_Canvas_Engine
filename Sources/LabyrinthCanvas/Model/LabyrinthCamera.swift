@@ -27,22 +27,46 @@ public enum LabyrinthInputMode: String, Codable, Sendable {
     case manipulate
 }
 
+public enum LabyrinthDrawingInputPolicy: String, Codable, Sendable {
+    /// Apple Pencil/stylus draws. Direct finger touches navigate the canvas.
+    case stylusOnly
+    /// Apple Pencil/stylus and direct finger touches both draw. Use two fingers to pan.
+    case fingerAndStylus
+}
+
 public struct LabyrinthCanvasOptions: Sendable {
     public var backgroundColor: LabyrinthColor
-    public var allowsFingerDrawing: Bool
+    public var drawingInputPolicy: LabyrinthDrawingInputPolicy
     public var eraserRadius: Double
     public var minimumStrokeSampleDistance: Double
     public var supportsRotation: Bool
 
+    public var allowsFingerDrawing: Bool {
+        get { drawingInputPolicy == .fingerAndStylus }
+        set { drawingInputPolicy = newValue ? .fingerAndStylus : .stylusOnly }
+    }
+
     public init(backgroundColor: LabyrinthColor = .paper,
-                allowsFingerDrawing: Bool = true,
+                drawingInputPolicy: LabyrinthDrawingInputPolicy = .fingerAndStylus,
                 eraserRadius: Double = 18,
                 minimumStrokeSampleDistance: Double = 2,
                 supportsRotation: Bool = true) {
         self.backgroundColor = backgroundColor
-        self.allowsFingerDrawing = allowsFingerDrawing
+        self.drawingInputPolicy = drawingInputPolicy
         self.eraserRadius = eraserRadius
         self.minimumStrokeSampleDistance = minimumStrokeSampleDistance
         self.supportsRotation = supportsRotation
+    }
+
+    public init(backgroundColor: LabyrinthColor = .paper,
+                allowsFingerDrawing: Bool,
+                eraserRadius: Double = 18,
+                minimumStrokeSampleDistance: Double = 2,
+                supportsRotation: Bool = true) {
+        self.init(backgroundColor: backgroundColor,
+                  drawingInputPolicy: allowsFingerDrawing ? .fingerAndStylus : .stylusOnly,
+                  eraserRadius: eraserRadius,
+                  minimumStrokeSampleDistance: minimumStrokeSampleDistance,
+                  supportsRotation: supportsRotation)
     }
 }

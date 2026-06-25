@@ -161,6 +161,11 @@ public struct LabyrinthBrushStyle: Codable, Equatable, Sendable {
     public var color: LabyrinthColor
     public var constantScreenSize: Bool
 
+    public var strokeWidthMode: LabyrinthStrokeWidthMode {
+        get { constantScreenSize ? .fixedScreenSize : .scalesWithZoom }
+        set { constantScreenSize = newValue == .fixedScreenSize }
+    }
+
     public init(brushID: String = LabyrinthInkBrush.id,
                 width: Double = 6,
                 color: LabyrinthColor = .ink,
@@ -170,6 +175,23 @@ public struct LabyrinthBrushStyle: Codable, Equatable, Sendable {
         self.color = color
         self.constantScreenSize = constantScreenSize
     }
+
+    public init(brushID: String = LabyrinthInkBrush.id,
+                width: Double = 6,
+                color: LabyrinthColor = .ink,
+                strokeWidthMode: LabyrinthStrokeWidthMode) {
+        self.init(brushID: brushID,
+                  width: width,
+                  color: color,
+                  constantScreenSize: strokeWidthMode == .fixedScreenSize)
+    }
+}
+
+public enum LabyrinthStrokeWidthMode: String, Codable, Sendable {
+    /// Stroke width stays visually fixed as the user zooms.
+    case fixedScreenSize
+    /// Stroke width is authored in canvas units and scales with zoom.
+    case scalesWithZoom
 }
 
 public struct LabyrinthStrokeDraft: Sendable {

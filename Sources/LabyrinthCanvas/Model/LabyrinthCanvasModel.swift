@@ -16,6 +16,33 @@ public final class LabyrinthCanvasModel: ObservableObject {
     public let brushes: LabyrinthBrushRegistry
     public let objects: LabyrinthObjectRegistry
 
+    public var strokeWidthMode: LabyrinthStrokeWidthMode {
+        get { brushStyle.strokeWidthMode }
+        set {
+            var style = brushStyle
+            style.strokeWidthMode = newValue
+            brushStyle = style
+        }
+    }
+
+    public var drawingInputPolicy: LabyrinthDrawingInputPolicy {
+        get { options.drawingInputPolicy }
+        set {
+            var updated = options
+            updated.drawingInputPolicy = newValue
+            options = updated
+        }
+    }
+
+    public var allowsFingerDrawing: Bool {
+        get { options.allowsFingerDrawing }
+        set {
+            var updated = options
+            updated.allowsFingerDrawing = newValue
+            options = updated
+        }
+    }
+
     private var nextZIndex: UInt32
     private var createdAt: Date
 

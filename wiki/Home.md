@@ -20,3 +20,7 @@ LabyrinthCanvas is a Swift package for recursive Metal canvases. It provides the
 - `LabyrinthStrokePayload`: the built-in stroke payload.
 - `LabyrinthBrush`: protocol for adding new brush behavior.
 - `LabyrinthObjectType`: registration point for custom object hit testing, gestures, and rendering.
+
+## Example App
+
+See `Examples/BasicCanvas` in the repository for a minimal SwiftUI app that shows tool controls, fixed-size vs scale-with-zoom strokes, finger/stylus input policy, and JSON save/load.

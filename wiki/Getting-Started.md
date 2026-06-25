@@ -47,13 +47,23 @@ canvas.brushStyle = LabyrinthBrushStyle(
 
 `constantScreenSize` keeps stroke width stable on screen as the user zooms. Set it to `false` when the stroke should scale with canvas content.
 
+Or use the package-level mode:
+
+```swift
+canvas.strokeWidthMode = .fixedScreenSize
+canvas.strokeWidthMode = .scalesWithZoom
+```
+
 ## Options
 
 ```swift
-canvas.options.allowsFingerDrawing = true
+canvas.drawingInputPolicy = .fingerAndStylus
+canvas.drawingInputPolicy = .stylusOnly
 canvas.options.eraserRadius = 24
 canvas.options.backgroundColor = .paper
 canvas.options.supportsRotation = true
 ```
+
+`fingerAndStylus` uses one-finger draw/erase and two-finger pan. `stylusOnly` uses Apple Pencil/stylus for draw/erase and frees one-finger touches for panning.
 
 These are canvas behavior settings only. They do not create UI.

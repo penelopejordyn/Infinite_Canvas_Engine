@@ -80,10 +80,21 @@ private final class LabyrinthMetalCanvasView: MTKView, MTKViewDelegate, UIGestur
     func mtkView(_ view: MTKView, drawableSizeWillChange size: CGSize) {}
 
     fileprivate func configureGesturePolicy() {
-        cameraPanGesture.minimumNumberOfTouches = model.inputMode == .navigate ? 1 : 2
+        cameraPanGesture.minimumNumberOfTouches = allowsSingleFingerCanvasPan ? 1 : 2
         cameraPanGesture.maximumNumberOfTouches = 0
         objectPanGesture.minimumNumberOfTouches = 1
         objectPanGesture.maximumNumberOfTouches = 1
+    }
+
+    private var allowsSingleFingerCanvasPan: Bool {
+        if model.inputMode == .navigate {
+            return true
+        }
+        if (model.inputMode == .draw || model.inputMode == .erase),
+           model.options.drawingInputPolicy == .stylusOnly {
+            return true
+        }
+        return false
     }
 
     private func installGestures() {
@@ -114,7 +125,7 @@ private final class LabyrinthMetalCanvasView: MTKView, MTKViewDelegate, UIGestur
         }
 
         if gestureRecognizer === cameraPanGesture {
-            return model.inputMode == .navigate || cameraPanGesture.numberOfTouches >= 2
+            return allowsSingleFingerCanvasPan || cameraPanGesture.numberOfTouches >= 2
         }
 
         if gestureRecognizer === pinchGesture {
@@ -306,7 +317,7 @@ private final class LabyrinthMetalCanvasView: MTKView, MTKViewDelegate, UIGestur
     private func acceptsDrawingTouch(_ touch: UITouch) -> Bool {
         guard model.inputMode == .draw || model.inputMode == .erase else { return false }
         if touch.type == .pencil { return true }
-        if touch.type == .direct { return model.options.allowsFingerDrawing }
+        if touch.type == .direct { return model.options.drawingInputPolicy == .fingerAndStylus }
         return false
     }
 
